@@ -25,6 +25,7 @@ IDLE_PAGE = '/home/pi/exhibit/web/index.html'
 # Kamailio connection
 KAMAILIO_HOST = '127.0.0.1'
 KAMAILIO_PORT = 5060
+KAMAILIO_EVAPI_PORT = 8448
 
 # Video player settings
 MPV_FULLSCREEN = True
