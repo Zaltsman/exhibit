@@ -149,19 +149,27 @@ def show_idle_screen():
 
 def handle_keypress(key):
     """
-    Main entry point for all keypresses detected by the SIP layer.
-    Routes each key to the correct action based on config.py.
+    Route a keypress to the correct action.
+    If a video is already playing, keypresses are ignored —
+    the participant must hang up first to choose a different video.
+    This simulates old-school phone behavior and prevents accidental
+    mid-video interruptions.
     """
     print(f"Keypress received: {key}")
 
-    if key in KEY_MAP:
-        # A video key was pressed — play the corresponding video
-        play_video(key)
-    elif key == PAUSE_KEY:
-        # Pause key pressed — toggle pause on current video
+    if key == PAUSE_KEY:
+        # Pause key always works regardless of state
         toggle_pause()
+        return
+
+    if current_video is not None:
+        # A video is already playing — ignore video selection keys
+        print(f"Key {key} ignored — video already playing, hang up to choose another")
+        return
+
+    if key in KEY_MAP:
+        play_video(key)
     else:
-        # Key is not mapped — ignore it silently
         print(f"Key {key} is not mapped — ignoring")
 
 

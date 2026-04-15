@@ -276,6 +276,55 @@ class TestVideoSwitching(unittest.TestCase):
         # stop_video should have been called with return_to_idle=False
         mock_stop.assert_called_once_with(return_to_idle=False)
 
+class TestKeypressWhileVideoPlaying(unittest.TestCase):
+    """
+    Tests for the old-school phone behavior — once a video is playing,
+    pressing another number key should be ignored. The participant
+    must hang up first to choose a different video.
+    """
+
+    def setUp(self):
+        controller.current_video = None
+        controller.is_paused = False
+        controller.chromium_process = None
+
+    @patch('controller.play_video')
+    def test_keypress_ignored_when_video_playing(self, mock_play):
+        """
+        If a video is currently playing and the participant presses
+        a number key, play_video() should NOT be called.
+        They must hang up first.
+        """
+        # Simulate a video already playing
+        controller.current_video = MagicMock()
+
+        controller.handle_keypress('2')
+
+        mock_play.assert_not_called()
+
+    @patch('controller.toggle_pause')
+    def test_pause_still_works_while_video_playing(self, mock_pause):
+        """
+        The pause key (0) should always work even while a video
+        is playing — it's a playback control, not a video selector.
+        """
+        controller.current_video = MagicMock()
+
+        controller.handle_keypress('0')
+
+        mock_pause.assert_called_once()
+
+    @patch('controller.play_video')
+    def test_keypress_works_when_no_video_playing(self, mock_play):
+        """
+        Confirm that keypresses work normally when no video is playing.
+        This ensures the ignore logic only fires when a video is active.
+        """
+        controller.current_video = None
+
+        controller.handle_keypress('3')
+
+        mock_play.assert_called_once_with('3')
 
 if __name__ == '__main__':
     # This allows running the tests directly with:
