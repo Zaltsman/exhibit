@@ -1,6 +1,10 @@
 import sys
 import os
 
+# Log every execution to a file so we can confirm Kamailio is calling us
+with open('/home/pi/exhibit/handle_event.log', 'a') as f:
+    f.write(f"handle_event.py called with args: {sys.argv}\n")
+
 # ---------------------------------------------------------------------------
 # handle_event.py
 #

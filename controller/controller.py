@@ -1,6 +1,8 @@
 import subprocess
 import os
 import sys
+import time
+call_start_time = None
 
 # config.py lives in the same folder and holds all settings
 # like which key maps to which video, paths, etc.
@@ -23,7 +25,14 @@ def play_video(key):
     Stop any currently playing video, then launch the video
     mapped to the pressed key in fullscreen using mpv.
     """
-    global current_video, is_paused
+    global current_video, is_paused, call_start_time
+
+    import time
+    import threading
+
+    # Kill any existing Chromium window so mpv can go fullscreen
+    subprocess.run(['pkill', '-f', 'chromium'], capture_output=True)
+    time.sleep(0.5)
 
     # Stop whatever is currently playing first
     stop_video(return_to_idle=False)
@@ -39,25 +48,26 @@ def play_video(key):
 
     print(f"Playing video for key {key}: {video_path}")
 
-    # Launch mpv with:
-    # --fs = fullscreen
-    # --no-terminal = no mpv output cluttering our terminal
-    # --really-quiet = suppress mpv's own logging
-    # --input-ipc-server = creates a socket so we can send pause/resume commands
     args = [
         'mpv',
         '--fs',
-        '--no-terminal',
-        '--really-quiet',
         '--input-ipc-server=/tmp/mpv-socket',
+        '--ao=alsa',
+        '--audio-device=alsa/hw:3,0',
         video_path
     ]
-    current_video = subprocess.Popen(args)
-    is_paused = False
 
-    # When the video finishes naturally, return to idle screen
-    # We do this in a separate thread so it doesn't block the main loop
-    import threading
+    env = os.environ.copy()
+    env['DISPLAY'] = ':0'
+    env['XAUTHORITY'] = '/home/pi/.Xauthority'
+    current_video = subprocess.Popen(args, env=env)
+    print(f"mpv launched with PID: {current_video.pid}")
+    time.sleep(0.5)
+    print(f"mpv still running: {current_video.poll() is None}")
+    is_paused = False
+    call_start_time = time.time()
+    print(f"Call start time recorded: {call_start_time}")
+
     def wait_for_video_end():
         current_video.wait()
         print("Video ended naturally — returning to idle")
@@ -126,25 +136,29 @@ def toggle_pause():
 def show_idle_screen():
     """
     Show the idle screen in Chromium kiosk mode.
-    We track the Chromium process so we only ever have one window open —
-    calling this multiple times will not spawn duplicate Chromium windows.
+    We track the Chromium process so we only ever have one window open.
     """
     global chromium_process
 
-    # If Chromium is already open and running, do nothing
     if chromium_process is not None and chromium_process.poll() is None:
         print("Idle screen already showing")
         return
 
     print("Launching idle screen in Chromium kiosk mode")
+    
+    env = os.environ.copy()
+    env['DISPLAY'] = ':0'
+    env['XAUTHORITY'] = '/home/pi/.Xauthority'
+    
     chromium_process = subprocess.Popen([
         'chromium',
         '--kiosk',
         '--noerrdialogs',
         '--disable-infobars',
         '--disable-session-crashed-bubble',
+        '--no-sandbox',
         f'file://{IDLE_PAGE}'
-    ])
+    ], env=env)
 
 
 def handle_keypress(key):
@@ -174,11 +188,16 @@ def handle_keypress(key):
 
 
 def handle_hangup():
-    """
-    Called by the SIP layer when the participant hangs up the phone.
-    Stops any playing video and returns to the idle screen.
-    This is the primary way participants exit a video —
-    hanging up is more natural than pressing a stop key.
-    """
+    global call_start_time
+    
+    # Ignore hangup if it comes within 2 seconds of call starting
+    # This prevents the phone's automatic BYE from stopping the video
+    if call_start_time is not None:
+        elapsed = time.time() - call_start_time
+        print(f"Hangup elapsed time: {elapsed:.2f}s")
+        if elapsed < 2.0:
+            print(f"Ignoring early hangup ({elapsed:.1f}s after call start)")
+            return
+    
     print("Phone hung up — stopping video and returning to idle")
     stop_video(return_to_idle=True)
