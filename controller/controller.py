@@ -2,35 +2,33 @@ import subprocess
 import os
 import sys
 import time
-call_start_time = None
+import threading
 
-# config.py lives in the same folder and holds all settings
-# like which key maps to which video, paths, etc.
 from config import KEY_MAP, PAUSE_KEY, EXHIBIT_DIR, IDLE_PAGE, MPV_FULLSCREEN
 
 # ---------------------------------------------------------------------------
 # State tracking
-# We keep track of the mpv process so we can pause, resume, or stop it.
-# current_video holds the running mpv process, or None if nothing is playing.
-# is_paused tracks whether we have paused the video so we can toggle correctly.
-# chromium_process holds the Chromium window so we don't open duplicate windows.
+# current_video — the running mpv process, or None if nothing is playing
+# is_paused — whether the current video is paused
+# chromium_process — the Chromium kiosk window
+# call_start_time — when the current call started, used to ignore early hangups
 # ---------------------------------------------------------------------------
 current_video = None
 is_paused = False
 chromium_process = None
+call_start_time = None
 
 
 def play_video(key):
     """
-    Stop any currently playing video, then launch the video
+    Kill Chromium, stop any current video, then launch the video
     mapped to the pressed key in fullscreen using mpv.
+    Audio is routed to the ALSA loopback (hw:3,0) so baresip
+    can stream it to the phone handset via RTP.
     """
     global current_video, is_paused, call_start_time
 
-    import time
-    import threading
-
-    # Kill any existing Chromium window so mpv can go fullscreen
+    # Kill Chromium so mpv can take fullscreen
     subprocess.run(['pkill', '-f', 'chromium'], capture_output=True)
     time.sleep(0.5)
 
@@ -48,6 +46,10 @@ def play_video(key):
 
     print(f"Playing video for key {key}: {video_path}")
 
+    # Launch mpv fullscreen with audio routed to ALSA loopback
+    # --ao=alsa and --audio-device route audio to hw:3,0
+    # baresip reads from hw:3,1 (the other end of the loopback)
+    # and streams it to the phone as RTP
     args = [
         'mpv',
         '--fs',
@@ -61,13 +63,11 @@ def play_video(key):
     env['DISPLAY'] = ':0'
     env['XAUTHORITY'] = '/home/pi/.Xauthority'
     current_video = subprocess.Popen(args, env=env)
-    print(f"mpv launched with PID: {current_video.pid}")
-    time.sleep(0.5)
-    print(f"mpv still running: {current_video.poll() is None}")
     is_paused = False
     call_start_time = time.time()
-    print(f"Call start time recorded: {call_start_time}")
 
+    # When video ends naturally, return to idle screen
+    # Runs in background thread so it doesn't block the main loop
     def wait_for_video_end():
         current_video.wait()
         print("Video ended naturally — returning to idle")
@@ -79,24 +79,20 @@ def play_video(key):
 def stop_video(return_to_idle=True):
     """
     Stop the currently playing video.
-    return_to_idle controls whether we show the idle screen after stopping.
-    We pass False when switching directly between videos so we don't
-    flash the idle screen between plays.
+    return_to_idle=False when switching between videos to avoid
+    flashing the idle screen between plays.
     """
     global current_video, is_paused
 
     if current_video is None:
-        # Nothing is playing — nothing to stop
         return
 
     print("Stopping current video")
     current_video.terminate()
 
     try:
-        # Give mpv 3 seconds to shut down cleanly
         current_video.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        # If it doesn't respond, force kill it
         print("mpv did not stop cleanly — force killing")
         current_video.kill()
 
@@ -111,18 +107,13 @@ def stop_video(return_to_idle=True):
 def toggle_pause():
     """
     Pause or resume the current video using mpv's IPC socket.
-    mpv has its own pause command which is more reliable than
-    sending OS-level signals.
     """
     global is_paused
 
     if current_video is None:
-        # No video is playing — nothing to pause
         print("No video playing — ignoring pause key")
         return
 
-    # Send the pause toggle command directly to mpv via its socket
-    # This is the correct way to pause mpv rather than using SIGSTOP
     pause_cmd = '{ "command": ["cycle", "pause"] }\n'
     try:
         with open('/tmp/mpv-socket', 'w') as sock:
@@ -136,7 +127,7 @@ def toggle_pause():
 def show_idle_screen():
     """
     Show the idle screen in Chromium kiosk mode.
-    We track the Chromium process so we only ever have one window open.
+    Tracks the process to avoid opening duplicate windows.
     """
     global chromium_process
 
@@ -145,11 +136,11 @@ def show_idle_screen():
         return
 
     print("Launching idle screen in Chromium kiosk mode")
-    
+
     env = os.environ.copy()
     env['DISPLAY'] = ':0'
     env['XAUTHORITY'] = '/home/pi/.Xauthority'
-    
+
     chromium_process = subprocess.Popen([
         'chromium',
         '--kiosk',
@@ -164,20 +155,17 @@ def show_idle_screen():
 def handle_keypress(key):
     """
     Route a keypress to the correct action.
-    If a video is already playing, keypresses are ignored —
-    the participant must hang up first to choose a different video.
-    This simulates old-school phone behavior and prevents accidental
-    mid-video interruptions.
+    Keys 1-7 play videos. Key 0 pauses/resumes.
+    If a video is already playing, number keys are ignored —
+    participant must hang up first to choose a different video.
     """
     print(f"Keypress received: {key}")
 
     if key == PAUSE_KEY:
-        # Pause key always works regardless of state
         toggle_pause()
         return
 
     if current_video is not None:
-        # A video is already playing — ignore video selection keys
         print(f"Key {key} ignored — video already playing, hang up to choose another")
         return
 
@@ -188,16 +176,19 @@ def handle_keypress(key):
 
 
 def handle_hangup():
+    """
+    Called when the participant hangs up the phone.
+    Ignores hangups within 2 seconds of call start —
+    the phone sends an automatic BYE shortly after connecting
+    which would otherwise stop the video prematurely.
+    """
     global call_start_time
-    
-    # Ignore hangup if it comes within 2 seconds of call starting
-    # This prevents the phone's automatic BYE from stopping the video
+
     if call_start_time is not None:
         elapsed = time.time() - call_start_time
-        print(f"Hangup elapsed time: {elapsed:.2f}s")
         if elapsed < 2.0:
             print(f"Ignoring early hangup ({elapsed:.1f}s after call start)")
             return
-    
+
     print("Phone hung up — stopping video and returning to idle")
     stop_video(return_to_idle=True)
