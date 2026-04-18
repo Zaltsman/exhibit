@@ -3,6 +3,8 @@ import os
 import sys
 import time
 import threading
+import socket
+
 
 from config import KEY_MAP, PAUSE_KEY, EXHIBIT_DIR, IDLE_PAGE, MPV_FULLSCREEN
 
@@ -55,7 +57,7 @@ def play_video(key):
         '--fs',
         '--input-ipc-server=/tmp/mpv-socket',
         '--ao=alsa',
-        '--audio-device=alsa/hw:3,0',
+        '--audio-device=alsa/hw:2,0',
         video_path
     ]
 
@@ -125,11 +127,17 @@ def toggle_pause():
 
 
 def show_idle_screen():
-    """
-    Show the idle screen in Chromium kiosk mode.
-    Tracks the process to avoid opening duplicate windows.
-    """
     global chromium_process
+
+    # Clear all baresip calls when returning to idle
+    # Handles cases where participants don't hang up properly
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.sendto(b'/hangupall\n', ('127.0.0.1', 5555))
+        s.close()
+        time.sleep(0.3)
+    except Exception:
+        pass
 
     if chromium_process is not None and chromium_process.poll() is None:
         print("Idle screen already showing")
@@ -148,6 +156,7 @@ def show_idle_screen():
         '--disable-infobars',
         '--disable-session-crashed-bubble',
         '--no-sandbox',
+        '--password-store=basic',
         f'file://{IDLE_PAGE}'
     ], env=env)
 

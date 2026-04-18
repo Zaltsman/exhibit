@@ -76,6 +76,8 @@ def monitor():
 
     print("SIP monitor running — waiting for phone activity")
 
+    controller.show_idle_screen()
+
     try:
         for line in process.stdout:
             line = line.strip()
