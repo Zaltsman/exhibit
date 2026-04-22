@@ -5,33 +5,30 @@ import time
 import threading
 import socket
 
-
-from config import KEY_MAP, PAUSE_KEY, EXHIBIT_DIR, IDLE_PAGE, MPV_FULLSCREEN
+from config import KEY_MAP, EXHIBIT_DIR, IDLE_PAGE
 
 # ---------------------------------------------------------------------------
 # State tracking
 # current_video — the running mpv process, or None if nothing is playing
-# is_paused — whether the current video is paused
-# chromium_process — the Chromium kiosk window
+# chromium_process — holds the idle screen mpv process
 # call_start_time — when the current call started, used to ignore early hangups
 # ---------------------------------------------------------------------------
 current_video = None
-is_paused = False
 chromium_process = None
 call_start_time = None
 
 
 def play_video(key):
     """
-    Kill Chromium, stop any current video, then launch the video
+    Kill idle screen, stop any current video, then launch the video
     mapped to the pressed key in fullscreen using mpv.
-    Audio is routed to the ALSA loopback (hw:3,0) so baresip
+    Audio is routed to the ALSA loopback (hw:2,0) so baresip
     can stream it to the phone handset via RTP.
     """
-    global current_video, is_paused, call_start_time
+    global current_video, call_start_time
 
-    # Kill Chromium so mpv can take fullscreen
-    subprocess.run(['pkill', '-f', 'chromium'], capture_output=True)
+    # Kill idle screen so mpv can take fullscreen
+    subprocess.run(['pkill', '-f', 'idle.mp4'], capture_output=True)
     time.sleep(0.5)
 
     # Stop whatever is currently playing first
@@ -48,10 +45,6 @@ def play_video(key):
 
     print(f"Playing video for key {key}: {video_path}")
 
-    # Launch mpv fullscreen with audio routed to ALSA loopback
-    # --ao=alsa and --audio-device route audio to hw:3,0
-    # baresip reads from hw:3,1 (the other end of the loopback)
-    # and streams it to the phone as RTP
     args = [
         'mpv',
         '--fs',
@@ -65,13 +58,12 @@ def play_video(key):
     env['DISPLAY'] = ':0'
     env['XAUTHORITY'] = '/home/pi/.Xauthority'
     current_video = subprocess.Popen(args, env=env)
-    is_paused = False
     call_start_time = time.time()
 
     # When video ends naturally, return to idle screen
-    # Runs in background thread so it doesn't block the main loop
+    video_process = current_video
     def wait_for_video_end():
-        current_video.wait()
+        video_process.wait()
         print("Video ended naturally — returning to idle")
         show_idle_screen()
 
@@ -84,7 +76,7 @@ def stop_video(return_to_idle=True):
     return_to_idle=False when switching between videos to avoid
     flashing the idle screen between plays.
     """
-    global current_video, is_paused
+    global current_video
 
     if current_video is None:
         return
@@ -99,38 +91,16 @@ def stop_video(return_to_idle=True):
         current_video.kill()
 
     current_video = None
-    is_paused = False
 
     if return_to_idle:
         print("Returning to idle screen")
         show_idle_screen()
 
 
-def toggle_pause():
-    """
-    Pause or resume the current video using mpv's IPC socket.
-    """
-    global is_paused
-
-    if current_video is None:
-        print("No video playing — ignoring pause key")
-        return
-
-    pause_cmd = '{ "command": ["cycle", "pause"] }\n'
-    try:
-        with open('/tmp/mpv-socket', 'w') as sock:
-            sock.write(pause_cmd)
-        is_paused = not is_paused
-        print(f"Video {'paused' if is_paused else 'resumed'}")
-    except Exception as e:
-        print(f"Could not send pause command to mpv: {e}")
-
-
 def show_idle_screen():
     global chromium_process
 
     # Clear all baresip calls when returning to idle
-    # Handles cases where participants don't hang up properly
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.sendto(b'/hangupall\n', ('127.0.0.1', 5555))
@@ -143,35 +113,33 @@ def show_idle_screen():
         print("Idle screen already showing")
         return
 
-    print("Launching idle screen in Chromium kiosk mode")
+    print("Launching idle screen")
 
     env = os.environ.copy()
     env['DISPLAY'] = ':0'
     env['XAUTHORITY'] = '/home/pi/.Xauthority'
 
     chromium_process = subprocess.Popen([
-        'chromium',
-        '--kiosk',
-        '--noerrdialogs',
-        '--disable-infobars',
-        '--disable-session-crashed-bubble',
-        '--no-sandbox',
-        '--password-store=basic',
-        f'file://{IDLE_PAGE}'
+        'mpv',
+        '--fs',
+        '--loop=inf',
+        '--no-audio',
+        '--really-quiet',
+        '/home/pi/exhibit/web/idle.mp4'
     ], env=env)
 
 
 def handle_keypress(key):
     """
     Route a keypress to the correct action.
-    Keys 1-7 play videos. Key 0 pauses/resumes.
+    Keys 1-7 play videos. Key 0 stops the current video.
     If a video is already playing, number keys are ignored —
     participant must hang up first to choose a different video.
     """
     print(f"Keypress received: {key}")
 
-    if key == PAUSE_KEY:
-        toggle_pause()
+    if key == '0':
+        stop_video(return_to_idle=True)
         return
 
     if current_video is not None:
