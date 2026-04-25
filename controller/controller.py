@@ -5,16 +5,16 @@ import time
 import threading
 import socket
 
-from config import KEY_MAP, EXHIBIT_DIR, IDLE_PAGE
+from config import KEY_MAP, EXHIBIT_DIR
 
 # ---------------------------------------------------------------------------
 # State tracking
 # current_video — the running mpv process, or None if nothing is playing
-# chromium_process — holds the idle screen mpv process
+# idle_process — holds the idle screen mpv process
 # call_start_time — when the current call started, used to ignore early hangups
 # ---------------------------------------------------------------------------
 current_video = None
-chromium_process = None
+idle_process = None
 call_start_time = None
 
 
@@ -98,7 +98,7 @@ def stop_video(return_to_idle=True):
 
 
 def show_idle_screen():
-    global chromium_process
+    global idle_process
 
     # Clear all baresip calls when returning to idle
     try:
@@ -109,7 +109,7 @@ def show_idle_screen():
     except Exception:
         pass
 
-    if chromium_process is not None and chromium_process.poll() is None:
+    if idle_process is not None and idle_process.poll() is None:
         print("Idle screen already showing")
         return
 
@@ -119,7 +119,7 @@ def show_idle_screen():
     env['DISPLAY'] = ':0'
     env['XAUTHORITY'] = '/home/pi/.Xauthority'
 
-    chromium_process = subprocess.Popen([
+    idle_process = subprocess.Popen([
         'mpv',
         '--fs',
         '--loop=inf',

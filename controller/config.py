@@ -11,21 +11,8 @@ KEY_MAP = {
     '9': 'videos/video9.mp4',
 }
 
-# Control keys
-PAUSE_KEY = '0'
-
 # Hang up = stop video and return to idle
 # This is handled as a call-ended event, not a keypress
 
 # Paths
 EXHIBIT_DIR = '/home/pi/exhibit'
-WEB_DIR = '/home/pi/exhibit/web'
-IDLE_PAGE = '/home/pi/exhibit/web/index.html'
-
-# Kamailio connection
-KAMAILIO_HOST = '127.0.0.1'
-KAMAILIO_PORT = 5060
-KAMAILIO_EVAPI_PORT = 8448
-
-# Video player settings
-MPV_FULLSCREEN = True
