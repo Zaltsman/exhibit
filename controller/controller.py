@@ -51,6 +51,7 @@ def play_video(key):
         '--input-ipc-server=/tmp/mpv-socket',
         '--ao=alsa',
         '--audio-device=alsa/hw:2,0',
+        '--hwdec=auto',
         video_path
     ]
 
