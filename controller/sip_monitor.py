@@ -7,7 +7,7 @@ import datetime
 # sip_monitor.py
 #
 # Watches SIP network traffic directly using tcpdump.
-# Looks for INVITE (keypress) and BYE (hangup) packets from the phone.
+# Looks for INVITE (keypress), BYE (hangup), and INFO (DTMF) packets from the phone.
 #
 # This approach bypasses Kamailio's exec module entirely and reads
 # the same packets we confirmed work during tcpdump testing.
@@ -24,6 +24,7 @@ def parse_line(line):
     tcpdump lines look like:
     14:00:58.959534 IP 192.168.10.2.5060 > 192.168.10.1.5060: SIP: INVITE sip:1@192.168.10.1 SIP/2.0
     14:00:59.057462 IP 192.168.10.2.5060 > 192.168.10.1.5060: SIP: BYE sip:1@192.168.10.1 SIP/2.0
+    14:01:05.123456 IP 192.168.10.2.5060 > 192.168.10.1.5060: SIP: INFO sip:...
 
     We only care about traffic FROM the phone (192.168.10.2)
     going TO Kamailio (192.168.10.1).
@@ -47,6 +48,12 @@ def parse_line(line):
     # Detect BYE — phone hung up
     if "SIP: BYE" in line:
         return "call_ended", None
+
+    # Detect DTMF INFO — key pressed during active call
+    # The phone sends DTMF as SIP INFO messages during a call
+    # We treat any INFO as a stop command (key 0)
+    if "SIP: INFO" in line:
+        return "dtmf_info", None
 
     return None, None
 
@@ -95,6 +102,12 @@ def monitor():
                 ts = datetime.datetime.now().strftime('%H:%M:%S.%f')
                 print(f"[{ts}] Hangup detected")
                 controller.handle_hangup()
+
+            elif event == "dtmf_info":
+                ts = datetime.datetime.now().strftime('%H:%M:%S.%f')
+                if controller.current_video is not None:
+                    print(f"[{ts}] DTMF INFO detected — stopping video")
+                    controller.handle_keypress('0')
 
     except KeyboardInterrupt:
         print("SIP monitor stopped")
