@@ -1,6 +1,6 @@
 # Exhibit — Interactive VoIP Phone Art Installation
 
-An interactive art installation where participants pick up a vintage VoIP phone, dial a number (1–9), and a corresponding video plays fullscreen on a monitor with audio through the phone handset.
+An interactive art installation where participants pick up a VoIP phone, dial a number (1–9), and a corresponding video plays fullscreen on a monitor with audio through the handset.
 
 ---
 
@@ -23,17 +23,20 @@ An interactive art installation where participants pick up a vintage VoIP phone,
 | Cisco CP-8811-3PCC MPP phone | VoIP phone — keypad + handset audio |
 | Network switch (8-port unmanaged) | Creates private LAN between Pi and phone |
 | Monitor with HDMI input | Displays videos and idle screen |
-| Micro-HDMI to HDMI cable | Pi → monitor (use MICRO not mini) |
+| Micro-HDMI to HDMI cable | Pi → monitor (must be MICRO, not mini) |
 | 2x Ethernet cables | Pi → switch, phone → switch |
 
 ### Network
+
 | Device | Interface | IP |
 |--------|-----------|-----|
 | Raspberry Pi | eth0 (switch) | 192.168.10.1 |
-| Raspberry Pi | wlan0 (WiFi) | assigned by venue |
+| Raspberry Pi | wlan0 (WiFi) | assigned by venue router |
 | Cisco phone | — | 192.168.10.2 |
 
-The switch creates a private LAN between the Pi and phone. The Pi's WiFi is used for SSH access only. No internet is required for the exhibit to function.
+> **Important:** The 192.168.10.x addresses are a private LAN created by the switch. They are **identical on both exhibit setups** — this is intentional. The only IP that differs between devices is the WiFi IP (wlan0), which is assigned by the venue's router and used for SSH access only. Find it with `hostname -I` after connecting to WiFi.
+
+The exhibit does not require internet — the switch creates a fully self-contained network between the Pi and phone.
 
 ---
 
@@ -57,8 +60,7 @@ mpv plays video
 → Cisco phone plays through handset
 ```
 
-> **Note:** The ALSA loopback card number (currently hw:2) can change if USB devices
-> are connected or disconnected. Always verify with `aplay -l` after reboot.
+> **Note:** The ALSA loopback card number (hw:2) can change if USB devices are connected. Always verify with `aplay -l` after reboot.
 
 ---
 
@@ -73,43 +75,35 @@ exhibit/
 ├── kamailio/
 │   └── kamailio.cfg       # Kamailio SIP server configuration
 ├── tests/
-│   └── test_controller.py # Unit tests
+│   └── test_controller.py # Unit tests (16 passing)
 ├── videos/                # Video files (not in git — transfer separately)
-│   ├── video1.mp4
-│   ├── video2.mp4
-│   └── ...
-├── web/
-│   ├── idle.mp4           # Idle screen looping video (not in git)
-│   └── images/
-│       └── idle.gif       # Placeholder (replaced by idle.mp4)
-├── setup.sh               # On-site setup script (run once on fresh Pi)
-└── README.md
+└── web/
+    ├── idle.mp4           # Idle screen looping video (not in git)
+    └── images/
 ```
 
 > **Video requirements:** All videos must be 1080p (1920×1080), 24fps, H.264/AAC.
-> 4K or high-framerate videos will cause A/V desync on the Pi 5.
+> 4K or high-framerate files will cause A/V desync on the Pi 5.
 > To convert: `ffmpeg -i input.mp4 -vf scale=1920:1080 -r 24 -c:v libx264 -crf 23 -c:a aac -b:a 192k output.mp4`
 
 ---
 
 ## Files NOT in Git
 
-These files exist on the Pi but are excluded from the repo:
-
 | Path | Reason |
 |------|---------|
-| `videos/` | Too large for GitHub (400–500MB each) |
+| `videos/` | Too large for GitHub |
 | `web/idle.mp4` | Large file, transfer separately |
-| `/home/pi/.baresip/config` | baresip config — created by setup.sh |
-| `/home/pi/.baresip/accounts` | baresip accounts — created by setup.sh |
+| `/home/pi/.baresip/config` | Created manually per device |
+| `/home/pi/.baresip/accounts` | Created manually per device |
 
-Transfer videos and idle.mp4 to a new device via USB drive or `scp`.
+Transfer videos and idle.mp4 via USB drive or `scp`.
 
 ---
 
 ## Daily Startup
 
-Run every morning after powering on the Pi and phone:
+SSH in each morning and run:
 
 ```bash
 export DISPLAY=:0
@@ -118,17 +112,16 @@ pkill baresip; pkill chromium; pkill mpv
 rm -f /home/pi/.config/chromium/Singleton*
 sudo modprobe snd-aloop
 baresip -f /home/pi/.baresip &
-DISPLAY=:0 python3 /home/pi/exhibit/controller/sip_monitor.py
+DISPLAY=:0 python3 /home/pi/exhibit/controller/sip_monitor.py 2>&1 | tee /home/pi/exhibit/exhibit.log
 ```
 
-**Step by step:**
-1. Plug in Pi power (USB-C)
-2. Plug in phone power
-3. Wait 30 seconds for Pi to boot
-4. SSH in from laptop: `ssh pi@<PI_WIFI_IP>`
-5. Run the startup command above
-6. Pick up phone, press 1, confirm video plays with audio
-7. Put laptop away — exhibit is running
+**Steps:**
+1. Plug in Pi power and phone power
+2. Wait 30 seconds for Pi to boot
+3. SSH in: `ssh pi@<WIFI_IP>` (find with `hostname -I` on the Pi)
+4. Run the startup command above
+5. Pick up phone, press `1`, confirm video plays with audio
+6. Put laptop away — exhibit is running
 
 ## Evening Shutdown
 
@@ -144,7 +137,7 @@ sudo shutdown now
 |---------|-----|
 | No audio / system unresponsive | Ctrl+C, run startup command again |
 | Phone shows "network connection failure" | Unplug phone power, wait 10s, replug |
-| Video freezes or idle screen stuck | `pkill chromium && pkill mpv`, hang up and retry |
+| Video freezes or idle screen stuck | `pkill mpv`, hang up and retry |
 | Pi unreachable over SSH | Use keyboard/mouse directly on Pi desktop |
 | Everything broken | `sudo reboot`, wait 45s, run startup command |
 
@@ -152,7 +145,7 @@ sudo shutdown now
 
 ## On-Site Setup (New Device)
 
-Target: 30–35 minutes per device.
+Target: 30–35 minutes.
 
 ### Phase 1 — First boot (5 min)
 Complete the Raspberry Pi setup wizard. Set username to `pi`.
@@ -164,40 +157,32 @@ sudo raspi-config
 hostname -I  # note the WiFi IP
 ```
 
-### Phase 3 — Run setup script (15–20 min)
+### Phase 3 — Install software (15–20 min)
 ```bash
-ssh pi@<IP>
-curl -sSL https://raw.githubusercontent.com/zaltsman/exhibit/main/setup.sh | bash
+sudo apt update
+sudo apt install -y mpv chromium kamailio kamailio-websocket-modules kamailio-extra-modules baresip tcpdump
+pip3 install pytest --break-system-packages
+sudo modprobe snd-aloop
+echo "snd-aloop" | sudo tee -a /etc/modules
 ```
 
-### Phase 4 — Configure Cisco phone web UI (5 min)
-Open `http://192.168.10.2/admin` in Chromium on the Pi. Log in, click **advanced**.
+### Phase 4 — Static IP on switch interface
+```bash
+sudo nmcli con add type ethernet ifname eth0 ip4 192.168.10.1/24
+```
 
-**Voice → System (Static IP):**
-- IP: `192.168.10.2`, Mask: `255.255.255.0`, Gateway: `192.168.10.1`, DNS: `8.8.8.8`
+### Phase 5 — Clone repo and configure Kamailio
+```bash
+cd /home/pi
+git clone https://github.com/Zaltsman/exhibit
+sudo cp /home/pi/exhibit/kamailio/kamailio.cfg /etc/kamailio/kamailio.cfg
+sudo systemctl enable kamailio
+sudo systemctl restart kamailio
+```
 
-**Voice → Ext 1:**
-- Proxy + Outbound Proxy: `192.168.10.1`
-- User ID: `phone`, Display Name: `phone`
-- DTMF Tx Method: `INFO`
-- Dial Plan: `([1-9]|*xx|[3469]11|0|00|[2-9]xxxxxx|1xxx[2-9]xxxxxxS0|xxxxxxxxxxx.)`
+### Phase 6 — Create baresip config (not in git)
 
-**Voice → Regional (set to `!` for silence):**
-- Dial Tone, Busy Tone, Reorder Tone, Off Hook Warning Tone
-
-### Phase 5 — Transfer videos (time varies)
-Copy `videos/` folder and `web/idle.mp4` via USB drive or `scp`.
-
-### Phase 6 — Test (5 min)
-Run startup command, pick up phone, press 1, confirm video and audio work.
-
----
-
-## baresip Configuration
-
-These files are created by `setup.sh` but documented here for reference.
-
-**`/home/pi/.baresip/config`**
+**`/home/pi/.baresip/config`:**
 ```
 module_path         /usr/lib/baresip/modules
 module              g711.so
@@ -217,14 +202,48 @@ audio_codecs        pcmu/8000/1
 rtp_timeout         3600
 ```
 
-**`/home/pi/.baresip/accounts`**
+**`/home/pi/.baresip/accounts`:**
 ```
 <sip:exhibit@192.168.10.1:5061;transport=udp>;regint=0;inreq_allowed=yes;catchall=yes;answermode=auto;audio_codecs=pcmu/8000/1
 ```
 
-> **Critical:** `net_interface eth0` is required. Without it baresip binds to wlan0
-> and never receives SIP traffic from the phone.
-> `menu.so` is required for `answermode=auto` to work.
+> **Critical:** `net_interface eth0` is required — without it baresip binds to wlan0 and never receives calls. `menu.so` is required for `answermode=auto` to work.
+
+### Phase 7 — tcpdump capability
+```bash
+sudo setcap cap_net_raw,cap_net_admin=eip /usr/bin/tcpdump
+```
+
+### Phase 8 — Configure Cisco phone web UI
+Open `http://192.168.10.2/admin` in Chromium on the Pi. Log in and click **Admin** (top right) for advanced mode.
+
+**Voice → System → IPv4 Settings:**
+- IP Address: `192.168.10.2`
+- Subnet Mask: `255.255.255.0`
+- Default Router: `192.168.10.1`
+- Primary DNS: `8.8.8.8`
+
+**Voice → Ext 1:**
+- Proxy: `192.168.10.1`
+- Outbound Proxy: `192.168.10.1`
+- User ID: `phone`
+- Display Name: `phone`
+- DTMF Tx Method: `INFO`
+- Dial Plan: `([1-9]|*xx|[3469]11|0|00|[2-9]xxxxxx|1xxx[2-9]xxxxxxS0|xxxxxxxxxxx.)`
+
+**Voice → Regional → Call Progress Tones (set all four to `!` for silence):**
+- Dial Tone: `!`
+- Busy Tone: `!`
+- Reorder Tone: `!`
+- Off Hook Warning Tone: `!`
+
+Click **Submit All Changes** after each tab.
+
+### Phase 9 — Transfer videos
+Copy `videos/` and `web/idle.mp4` via USB drive or `scp`.
+
+### Phase 10 — Test
+Run startup command, pick up phone, press `1`, confirm video and audio work.
 
 ---
 
@@ -246,20 +265,22 @@ ssh pi@<WIFI_IP>
 # Check phone registration
 sudo kamctl ul show
 
+# Check ALSA loopback card number (verify hw:2 after reboot)
+aplay -l
+
 # Check Kamailio status
 sudo systemctl status kamailio
 
-# Check baresip running
-ps aux | grep baresip | grep -v grep
-
-# Check ALSA loopback card number
-aplay -l
-
-# Kamailio — copy config and restart
+# Copy Kamailio config and restart
 sudo cp /home/pi/exhibit/kamailio/kamailio.cfg /etc/kamailio/kamailio.cfg
-sudo kamailio -c /etc/kamailio/kamailio.cfg
 sudo systemctl restart kamailio
 
-# Convert video to correct format (run on laptop or Pi)
+# Convert video to correct format
 ffmpeg -i input.mp4 -vf scale=1920:1080 -r 24 -c:v libx264 -crf 23 -c:a aac -b:a 192k output.mp4
+
+# Check temperature
+vcgencmd measure_temp
+
+# View exhibit log
+cat /home/pi/exhibit/exhibit.log
 ```
