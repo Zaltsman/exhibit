@@ -52,6 +52,8 @@ def play_video(key):
         '--ao=alsa',
         '--audio-device=alsa/hw:2,0',
         '--hwdec=auto',
+        '--gpu-api=opengl',
+        '--vo=gpu',
         video_path
     ]
 
@@ -126,6 +128,8 @@ def show_idle_screen():
         '--loop=inf',
         '--no-audio',
         '--really-quiet',
+        '--gpu-api=opengl',
+        '--vo=gpu',
         '/home/pi/exhibit/web/idle.mp4'
     ], env=env)
 
